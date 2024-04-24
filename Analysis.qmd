@@ -1,0 +1,164 @@
+---
+title: "Homework Project 2"
+author: "Cheops Steller"
+format: 
+  html:
+    embed-resources: true
+code-fold: true
+code-summary: show code
+supress_warning:
+---
+## Introduction
+In this report, I will explore the trends in the online dating community by analyzing data of anonymized data of user profiles from the dating platform OKCupid.
+Specifically, I will first investigate the demographics of the user base cross examining gender and ethnicity. Then, I analyzed the relation between education level and people's expressiveness in terms of how long they wrote in the optional essays for OKCupid's profiles. Third, the difference of word choices between genders is compared; Last, the top bigrams used by different ethnicities are studied.
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+```{r}
+file=read.csv("okcupid_profiles.csv")
+library(tidyverse)
+library(tidytext)
+library(kableExtra)
+library(babynames)
+```
+## Data Format
+The data has 31 columns, on age, sex, orientation, body type, education, income, job, relationship status, alcohol preference, smoking preference, drug preference, pet, height, last online, ethnicity, location, diet, off spring, religion, zodiac signs, language, and 9 optional personal essays.
+
+## Demographics Visualization
+To begin with, let's explore the demographic composition of the user base of OKCupid. We will analyze the gender ratio when coupled with ethnicity. 
+To do that, I have to first uncouple the people who have more than one ethnicity by unnesting. Then, I graphed the ratio as pie chart and then facet wrapped by ethnicity.
+From the results, it appeared that as male are on average three fourth of the entire user base, where the ratio more skewed for Indians and Pacific Islanders and less skewed for Asians, Blacks, and Native Americans, and Caucasians.
+```{r}
+unnested<-file %>% 
+  separate_rows(ethnicity, sep = ",\\s*") %>% 
+  separate_rows(ethnicity,sep="/")
+
+ggplot(unnested, aes(x = "", y = sex, fill = sex)) +
+  geom_bar(stat = "identity", width = 1) + 
+  coord_polar(theta = "y") +
+  facet_wrap(~ ethnicity, scales = "free", ncol = 4) +
+  labs(x = NULL, y = NULL, fill = "Sex") +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+## Analysis of Education Level in Relation to Length of Essays
+Here we analyze the relation between education level, and how long people write their essays using the first essay out of nine which most people completed.
+```{r}
+word_counted <- unnested %>%
+  mutate(word_count = str_count(essay0, "\\b\\w+\\b"))
+edu_word<-word_counted %>% 
+  group_by(education) %>% 
+  summarize(mean=mean(word_count)) %>% 
+  arrange(by=mean)
+ggplot(edu_word %>% arrange(desc(mean)), aes(x =reorder( as.factor(education),mean), y = mean)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Education", y = "Average Word Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(legend.position = "none")
+`````````
+
+The results are definitely interesting. As expected, high schoolers and high school dropouts are less expressive in terms of word counts, but other than that, the pattern is much less clear. People who are working towards a general degree such as four year Bachelors, Masters, and Phd's, are middling, whereas the essays of dropouts and graduates ranges from the very short to the very long. Below is a table with precise values.
+```{r}
+kable(arrange(edu_word,desc=TRUE))
+```
+## Word Frequency Contrast Between Genders
+Now, we compare the use of words between genders in a TF IDF analysis. It turned out that we also need to filter out names along with stop words in the analysis, since many people are introducing themselves by name, which is not a useful indicator for this analysis.
+Just to clarify: I do not intend to show any words that are inappropriate. The words displayed here to me at least are within tolerable bounds.
+```{r}
+names <- babynames %>%
+  select(name) %>%
+  distinct() %>%
+  pull(name) %>%
+  tolower()
+
+essay_freq<-file %>% 
+  filter(!is.na(essay0) & !is.na(sex))
+
+df_tidy <- essay_freq %>%
+  unnest_tokens(word, essay0) %>%
+  count(sex, word) %>%
+  filter(!word %in% stop_words$word) %>% 
+  filter(!word %in% names)
+
+idf <- df_tidy %>%
+  group_by(sex) %>%
+  mutate(term_frequency = n / sum(n)) %>% 
+  bind_tf_idf(word,sex,n)
+idf %>%
+  group_by(sex) %>% 
+  arrange(desc(tf_idf)) %>% 
+  top_n(20, tf_idf) %>% 
+  ggplot(aes(x = tf_idf, y = reorder(word, tf_idf), fill = sex)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~sex, scales = "free") +
+  theme_minimal()
+```
+It is apparent that this essay for most people is a general introduction, with some mentions of hobbies. It is also clear without the labels which one is which, since both columns include many sterotypical words. To see if these patterns continue, let us repeat the same procedure for the second essay.
+```{r}
+essay_freq2<-essay_freq %>% 
+  filter(!is.na(essay1))
+
+df_tidy2 <- essay_freq2 %>%
+  unnest_tokens(word, essay1) %>%
+  count(sex, word) %>%
+  filter(!word %in% stop_words$word) %>% 
+  filter(!word %in% names)
+
+idf2 <- df_tidy2 %>%
+  group_by(sex) %>%
+  mutate(term_frequency = n / sum(n)) %>% 
+  bind_tf_idf(word,sex,n)
+idf2 %>%
+  group_by(sex) %>% 
+  arrange(desc(tf_idf)) %>% 
+  top_n(20, tf_idf) %>% 
+  ggplot(aes(x = tf_idf, y = reorder(word, tf_idf), fill = sex)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~sex, scales = "free") +
+  theme_minimal()
+```
+Here, the topic seemed to change to occupation. Interestingly both male and female users of OKCupid are largely employed as waiters and waitresses. Some of the stereotypical jobs for both genders also appear in the columns, making them again readily distinguishable.
+## Bigram Analysis Coupled with Ethnicity
+Here, we analyze the bigram frequency across ethnicity using the third essay.
+```{r}
+df_bigrams <- unnested %>%
+  filter(!is.na(essay2) & !is.na(diet))
+bigrams=df_bigrams %>% 
+  select(ethnicity,essay2)
+
+bigram_tidy <- bigrams %>% 
+  unnest_tokens(bigram, essay2, token = "ngrams", n = 2) %>% 
+  group_by(bigram,ethnicity) %>%  
+  summarize(count = n()) %>%       
+  ungroup()
+
+bigram_words <- bigram_tidy %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word) %>% 
+  filter(!word1 %in% names & !word2 %in% names)
+
+bigram_without_stopwords <- bigram_words %>%
+  unite(bigram, word1, word2, sep = " ")
+
+tf_idf_bigrams <- bigram_without_stopwords %>%
+  group_by(ethnicity) %>%
+  mutate(term_frequency = count / sum(count)) %>% 
+  bind_tf_idf(bigram,ethnicity,count) 
+
+tf_idf_bigrams %>%
+  group_by(ethnicity) %>% 
+  arrange(desc(tf_idf), .by_group = TRUE) %>%  
+  mutate(rank = row_number()) %>%  # to break ties
+  filter(rank <= 2) %>% 
+  ggplot(aes(x = tf_idf, y = reorder(bigram, tf_idf), fill = ethnicity)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~ethnicity, scales = "free",nrow=6) +
+  theme_minimal()
+
+```
+
+The results are quite entertaining. For some reason, "racial humor" appeared in two of the top bigrams. Both bigrams for native Americans contains "caressing", perhaps part of the same phrase being used by many people. "Chinese food" appeared in the Asian category which is expected. I have no idea what the two bigrams for Middle Easterners mean.
